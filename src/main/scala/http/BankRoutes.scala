@@ -1,0 +1,5 @@
+package http
+
+class BankRoutes {
+
+}
