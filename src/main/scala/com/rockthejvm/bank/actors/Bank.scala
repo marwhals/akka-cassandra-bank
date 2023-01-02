@@ -2,13 +2,16 @@ package com.rockthejvm.bank.actors
 
 import java.util.UUID
 
+import akka.NotUsed
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors}
-import akka.actor.typed.{ActorRef, Behavior}
+import akka.actor.typed.{ActorRef, ActorSystem, Behavior, Scheduler}
 import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior}
-import com.rockthejvm.bank.actors.PersistentBankAccount.{ commandHandler}
+import akka.util.Timeout
 
-class Bank {
+import scala.concurrent.duration._
+
+object Bank {
   // commands = messages
   import PersistentBankAccount.Command._
   import PersistentBankAccount.Command
@@ -45,7 +48,14 @@ class Bank {
         }
     }
   //event handler
-  val eventHandler: (State, Event) => State = ???
+  def eventHandler(context: ActorContext[Command]): (State, Event) => State = (state, event) =>
+    event match {
+      case BankAccountCreated(id) =>
+        val account = context.child(id)
+      .getOrElse(context.spawn(PersistentBankAccount(id), id))//exists after the command handler, does not exist in recovery mode, so needs to be created
+          .asInstanceOf[ActorRef[Command]]
+        state.copy(state.accounts + (id -> account))
+    }
   // apply method - behaviour
   def apply(): Behavior[Command] = Behaviors.setup { context =>
 
@@ -53,9 +63,42 @@ class Bank {
       persistenceId = PersistenceId.ofUniqueId("bank"),
       emptyState = State(Map()),
       commandHandler = commandHandler(context),
-      eventHandler = eventHandler
+      eventHandler = eventHandler(context)
     )
   }
 
+}
 
+object BankPlayground {
+  import PersistentBankAccount.Command._
+  import PersistentBankAccount.Command.GetBankAccount
+  import PersistentBankAccount.Response._
+
+  def main(args: Array[String]): Unit = {
+    val rootBehaviour: Behavior[NotUsed] = Behaviors.setup { context =>
+      val bank = context.spawn(Bank(), "bank")
+      //ask pattern
+      import akka.actor.typed.scaladsl.AskPattern._
+      import scala.concurrent.ExecutionContext
+
+      implicit val timeout: Timeout = Timeout(2.seconds)
+      implicit val scheduler: Scheduler = context.system.scheduler
+      implicit val ec: ExecutionContext = context.executionContext
+
+
+
+      bank.ask(replyTo => CreateBankAccount("tim", "GBP", 123, replyTo )).flatMap{
+        case BankAccountCreatedResponse(id) =>
+          context.log.info(s"""Successfully created bank account $id""")
+          bank.ask(replyTo => GetBankAccount(id, replyTo))
+      }.foreach {
+        case GetBankAccountResponse(maybeBankAccount) =>
+          context.log.info(s"""Acccount details: $maybeBankAccount""")
+      }
+      Behaviors.empty
+    }
+
+    val system = ActorSystem(rootBehaviour, "bankDemo")
+
+  }
 }
