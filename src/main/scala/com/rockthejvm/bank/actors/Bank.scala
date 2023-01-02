@@ -9,6 +9,7 @@ import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior}
 import akka.util.Timeout
 
+import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
 
 object Bank {
@@ -71,34 +72,39 @@ object Bank {
 
 object BankPlayground {
   import PersistentBankAccount.Command._
-  import PersistentBankAccount.Command.GetBankAccount
   import PersistentBankAccount.Response._
+  import PersistentBankAccount.Response
 
   def main(args: Array[String]): Unit = {
-    val rootBehaviour: Behavior[NotUsed] = Behaviors.setup { context =>
+    val rootBehavior: Behavior[NotUsed] = Behaviors.setup { context =>
       val bank = context.spawn(Bank(), "bank")
-      //ask pattern
-      import akka.actor.typed.scaladsl.AskPattern._
-      import scala.concurrent.ExecutionContext
+      val logger = context.log
 
+      val responseHandler = context.spawn(Behaviors.receiveMessage[Response]{
+        case BankAccountCreatedResponse(id) =>
+          logger.info(s"successfully created bank account $id")
+          Behaviors.same
+        case GetBankAccountResponse(maybeBankAccount) =>
+          logger.info(s"Account details: $maybeBankAccount")
+          Behaviors.same
+      }, "replyHandler")
+
+      // ask pattern
+      import akka.actor.typed.scaladsl.AskPattern._
+      import scala.concurrent.duration._
       implicit val timeout: Timeout = Timeout(2.seconds)
       implicit val scheduler: Scheduler = context.system.scheduler
       implicit val ec: ExecutionContext = context.executionContext
 
+      // test 1
+      //      bank ! CreateBankAccount("daniel", "USD", 10, responseHandler)
 
+      // test 2
+      //      bank ! GetBankAccount("replaceWithYourUuidHere", responseHandler)
 
-      bank.ask(replyTo => CreateBankAccount("tim", "GBP", 123, replyTo )).flatMap{
-        case BankAccountCreatedResponse(id) =>
-          context.log.info(s"""Successfully created bank account $id""")
-          bank.ask(replyTo => GetBankAccount(id, replyTo))
-      }.foreach {
-        case GetBankAccountResponse(maybeBankAccount) =>
-          context.log.info(s"""Acccount details: $maybeBankAccount""")
-      }
       Behaviors.empty
     }
 
-    val system = ActorSystem(rootBehaviour, "bankDemo")
-
+    val system = ActorSystem(rootBehavior, "BankDemo")
   }
 }
