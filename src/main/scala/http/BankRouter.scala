@@ -25,7 +25,7 @@ case class BankAccountUpdateRequest(currency: String, amount: Double) {
   def toCommand(id: String, replyTo: ActorRef[Response]): Command = UpdateBalance(id, currency, amount, replyTo)
 }
 
-class BankRoutes(bank: ActorRef[Command])(implicit system: ActorSystem[_]) {
+class BankRouter(bank: ActorRef[Command])(implicit system: ActorSystem[_]) {
 
   implicit val timeOut: Timeout = Timeout(5.seconds)
 
