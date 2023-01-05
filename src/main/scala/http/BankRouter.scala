@@ -10,7 +10,10 @@ import com.rockthejvm.bank.actors.PersistentBankAccount.Response._
 import io.circe.generic.auto._
 import de.heikoseeberger.akkahttpcirce.FailFastCirceSupport._
 import akka.actor.typed.scaladsl.AskPattern._
+import akka.http.scaladsl.server.Route
 import akka.util.Timeout
+import http.Validation._
+import cats.implicits._
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -19,11 +22,32 @@ case class BankAccountCreationRequest(user: String, currency: String, balance: D
   def toCommand(replyTo: ActorRef[Response]): Command = CreateBankAccount(user, currency, balance, replyTo)
 }
 
-case class FailureResponse(reason: String)
+object BankAccountCreationRequest {
+  implicit val validator: Validator[BankAccountCreationRequest] = new Validator[BankAccountCreationRequest] {
+    override def validate(request: BankAccountCreationRequest): ValidationResult[BankAccountCreationRequest] = {
+      val userValidation = validateRequired(request.user, "user")
+      val currencyValidation = validateRequired(request.currency, "currency")
+      val balanceValidation = validateMinimum(request.balance, 0,  "balance")
+      (userValidation, currencyValidation, balanceValidation).mapN(BankAccountCreationRequest.apply)
+    }
+  }
+}
 
 case class BankAccountUpdateRequest(currency: String, amount: Double) {
   def toCommand(id: String, replyTo: ActorRef[Response]): Command = UpdateBalance(id, currency, amount, replyTo)
 }
+
+object BankAccountUpdateRequest {
+  implicit val validator: Validator[BankAccountUpdateRequest] = new Validator[BankAccountUpdateRequest] {
+    override def validate(request: BankAccountUpdateRequest): ValidationResult[BankAccountUpdateRequest] = {
+      val currencyValidation = validateRequired(request.currency, "currency")
+      val amountValidation = validateMinimum(request.amount, 0,  "balance")
+      (currencyValidation, amountValidation).mapN(BankAccountUpdateRequest.apply)
+    }
+  }
+}
+
+case class FailureResponse(reason: String)
 
 class BankRouter(bank: ActorRef[Command])(implicit system: ActorSystem[_]) {
 
@@ -37,6 +61,14 @@ class BankRouter(bank: ActorRef[Command])(implicit system: ActorSystem[_]) {
 
   def updateBankAccount(id: String, request: BankAccountUpdateRequest): Future[Response] =
     bank.ask(replyTo => request.toCommand(id, replyTo))
+
+  def validateRequest[R : Validator](request: R)(routeIfValid: Route): Route =
+    validateEntity(request) match {
+      case Valid(_) =>
+        routeIfValid
+      case Invalid(failures) =>
+        complete(StatusCodes.BadRequest, FailureResponse(failures.toList.map(_.errorMessage).mkString(",")))
+    }
 
   /*
       POST /bank/
