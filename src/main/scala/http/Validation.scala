@@ -4,40 +4,49 @@ import cats.data.ValidatedNel
 import cats.implicits._
 
 object Validation {
-  // fiel must be presnet
+
+  // field must be present
   trait Required[A] extends (A => Boolean)
-  // minimjm value
-  trait Minimum[A] extends ((A, Double) => Boolean)
+
+  // minimum value
+  trait Minimum[A] extends ((A, Double) => Boolean) // for numerical fields
+  trait MinimumAbs[A] extends ((A, Double) => Boolean) // for numerical fields
 
   // TC instances
   implicit val requiredString: Required[String] = _.nonEmpty
   implicit val minimumInt: Minimum[Int] = _ >= _
   implicit val minimumDouble: Minimum[Double] = _ >= _
+  implicit val minimumIntAbs: MinimumAbs[Int] = Math.abs(_) >= _
+  implicit val minimumDoubleAbs: MinimumAbs[Double] = Math.abs(_) >= _
 
-  //usage
+  // usage
   def required[A](value: A)(implicit req: Required[A]): Boolean = req(value)
-  def minimum[A](value: A, threshold: Double)(implicit min: Minimum[A]): Boolean = min(value, threshold)
-  //validated
-  type ValidationResult[A] = ValidatedNel[String, A] //Nel == a non empty list
 
-  //validation failiures
+  def minimum[A](value: A, threshold: Double)(implicit min: Minimum[A]): Boolean = min(value, threshold)
+
+  def minimumAbs[A](value: A, threshold: Double)(implicit min: MinimumAbs[A]): Boolean = min(value, threshold)
+
+  // Validated
+  type ValidationResult[A] = ValidatedNel[ValidationFailure, A]
+
+  // validation failures
   trait ValidationFailure {
     def errorMessage: String
   }
 
   case class EmptyField(fieldName: String) extends ValidationFailure {
-    override def errorMessage = s"""$fieldName is empty"""
+    override def errorMessage = s"$fieldName is empty"
   }
 
   case class NegativeValue(fieldName: String) extends ValidationFailure {
-    override def errorMessage: String = s"""$fieldName is negative"""
+    override def errorMessage = s"$fieldName is negative"
   }
 
   case class BelowMinimumValue(fieldName: String, min: Double) extends ValidationFailure {
-    override def errorMessage: String = s"""$fieldName is below the minimum threshold $min"""
+    override def errorMessage = s"$fieldName is below the minimum threshold $min"
   }
 
-  //main API
+  // "main" API
   def validateMinimum[A: Minimum](value: A, threshold: Double, fieldName: String): ValidationResult[A] = {
     if (minimum(value, threshold)) value.validNel
     else if (threshold == 0) NegativeValue(fieldName).invalidNel
@@ -60,5 +69,4 @@ object Validation {
 
   def validateEntity[A](value: A)(implicit validator: Validator[A]): ValidationResult[A] =
     validator.validate(value)
-
 }

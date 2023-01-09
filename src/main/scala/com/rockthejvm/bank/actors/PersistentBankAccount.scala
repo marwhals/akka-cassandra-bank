@@ -4,6 +4,8 @@ import akka.actor.typed.{ActorRef, Behavior}
 import akka.persistence.typed.PersistenceId
 import akka.persistence.typed.scaladsl.{Effect, EventSourcedBehavior}
 
+import scala.util.{Failure, Success, Try}
+
 
 //A single bank account
 object PersistentBankAccount {
@@ -13,7 +15,6 @@ object PersistentBankAccount {
       - fault tolerance
       - can audit entire journey
    */
-  import PersistentBankAccount._
   import PersistentBankAccount.Command._
   // commands = messages
   sealed trait Command
@@ -37,7 +38,7 @@ object PersistentBankAccount {
   object Response {
 
   case class BankAccountCreatedResponse(id: String) extends Response
-  case class BankAccountBalanceUpdatedResponse(maybeBankAccount: Option[BankAccount]) extends Response
+  case class BankAccountBalanceUpdatedResponse(maybeBankAccount: Try[BankAccount]) extends Response
   case class GetBankAccountResponse(maybeBankAccount: Option[BankAccount]) extends Response
   }
   /*
@@ -50,32 +51,32 @@ object PersistentBankAccount {
 
   val commandHandler: (BankAccount, Command) => Effect[Event, BankAccount] = (state, command) =>
     command match {
-      case CreateBankAccount(user, currency, initialBalance, replyTo) =>
+      case CreateBankAccount(user, currency, initialBalance, bank) =>
         val id = state.id
         /*
-          - bank created me
+          - bank creates me
           - bank sends me CreateBankAccount
           - I persist BankAccountCreated
           - I update my state
-          - reply back to bank with the bankAccountCreatedResponse
+          - reply back to bank with the BankAccountCreatedResponse
           - (the bank surfaces the response to the HTTP server)
          */
         Effect
-          .persist(BankAccountCreated(BankAccount(id, user, currency, initialBalance))) // Persisted into Cassandra
-          .thenReply(replyTo)(_ => BankAccountCreatedResponse(id))
-      case UpdateBalance(_, _, amount, replyTo) =>
+          .persist(BankAccountCreated(BankAccount(id, user, currency, initialBalance))) // persisted into Cassandra
+          .thenReply(bank)(_ => BankAccountCreatedResponse(id))
+      case UpdateBalance(_, _, amount, bank) =>
         val newBalance = state.balance + amount
-        //check here for withdrawl
+        // check here for withdrawal
         if (newBalance < 0) // illegal
-          Effect.reply(replyTo)(BankAccountBalanceUpdatedResponse(None))
+          Effect.reply(bank)(BankAccountBalanceUpdatedResponse(Failure(new RuntimeException("Cannot withdraw more than available"))))
         else
           Effect
             .persist(BalanceUpdated(amount))
-            .thenReply(replyTo)(newState => BankAccountBalanceUpdatedResponse(Some(newState)))
-      case GetBankAccount(_, replyTo) =>
-        Effect.reply(replyTo)(GetBankAccountResponse(Some(state)))
-
+            .thenReply(bank)(newState => BankAccountBalanceUpdatedResponse(Success(newState)))
+      case GetBankAccount(_, bank) =>
+        Effect.reply(bank)(GetBankAccountResponse(Some(state)))
     }
+
   val eventHandler: (BankAccount, Event) => BankAccount = (state, event) =>
     event match {
       case BankAccountCreated(bankAccount) => bankAccount

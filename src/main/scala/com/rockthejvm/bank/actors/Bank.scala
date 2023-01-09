@@ -11,6 +11,7 @@ import akka.util.Timeout
 
 import scala.concurrent.ExecutionContext
 import scala.concurrent.duration._
+import scala.util.Failure
 
 object Bank {
   // commands = messages
@@ -38,7 +39,7 @@ object Bank {
           case Some(account) =>
             Effect.reply(account)(updateCmd)
           case None =>
-            Effect.reply(replyTo)(BankAccountBalanceUpdatedResponse(None)) //Failed account search
+            Effect.reply(replyTo)(BankAccountBalanceUpdatedResponse(Failure(new RuntimeException("Bank account cannot be fount")))) //Failed account search
         }
       case getCmd @ GetBankAccount(id, replyTo) =>
         state.accounts.get(id) match {
